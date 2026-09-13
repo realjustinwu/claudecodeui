@@ -28,6 +28,7 @@ import {
   CLAUDE_PREDEFINED_MODELS,
   CLAUDE_ULTRACODE_EFFORT
 } from '@/modules/providers/list/claude/claude-models.provider.js';
+import { resolveClaudeContextWindow } from '@/modules/providers/services/provider-token-usage.service.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import {
   createNotificationEvent,
@@ -422,16 +423,19 @@ function readNumber(value) {
  * `input_tokens + cache_read + cache_creation` is one request's whole prompt,
  * which is exactly what the context window holds at that moment.
  * @param {Object} messageUsage - Anthropic usage payload
+ * @param {...(string|null|undefined)} models - model names to resolve the
+ *   window from: a `[1m]` selection widens it to 1M regardless of the global
+ *   CONTEXT_WINDOW setting (see resolveClaudeContextWindow)
  * @returns {TokenBudget} Token budget object
  */
-function buildTokenBudget(messageUsage) {
+function buildTokenBudget(messageUsage, ...models) {
   const directInputTokens = readNumber(messageUsage.input_tokens ?? messageUsage.inputTokens);
   const cacheCreationTokens = readNumber(messageUsage.cache_creation_input_tokens ?? messageUsage.cacheCreationInputTokens ?? messageUsage.cacheCreationTokens);
   const cacheReadTokens = readNumber(messageUsage.cache_read_input_tokens ?? messageUsage.cacheReadInputTokens ?? messageUsage.cacheReadTokens);
   const cacheTokens = cacheCreationTokens + cacheReadTokens;
   const inputTokens = directInputTokens + cacheTokens;
   const outputTokens = readNumber(messageUsage.output_tokens ?? messageUsage.outputTokens);
-  const contextWindow = parseInt(process.env.CONTEXT_WINDOW, 10) || 160000;
+  const contextWindow = resolveClaudeContextWindow(process.env.CONTEXT_WINDOW, ...models);
 
   return {
     used: inputTokens + outputTokens,
@@ -455,9 +459,12 @@ function buildTokenBudget(messageUsage) {
  * prompt its own request carried. The turn-ending `result` is deliberately not
  * a source here — see `extractCumulativeTokenBudget`.
  * @param {Object} sdkMessage - SDK stream message
+ * @param {string|null} [sessionModel] - model selection recorded for the
+ *   session; behind a proxy the message reports the upstream id (e.g.
+ *   `glm-5.3`) without the `[1m]` marker, so this carries the variant
  * @returns {TokenBudget|null} Token budget object or null
  */
-function extractTokenBudget(sdkMessage) {
+function extractTokenBudget(sdkMessage, sessionModel) {
   if (!sdkMessage || typeof sdkMessage !== 'object') {
     return null;
   }
@@ -482,7 +489,7 @@ function extractTokenBudget(sdkMessage) {
     return null;
   }
 
-  return buildTokenBudget(messageUsage);
+  return buildTokenBudget(messageUsage, sessionModel, sdkMessage.message?.model);
 }
 
 /**
@@ -499,15 +506,17 @@ function extractTokenBudget(sdkMessage) {
  * message ever emits, so it stays available for the caller to use when a turn
  * produced no assistant budget at all.
  * @param {Object} sdkMessage - SDK stream message
+ * @param {string|null} [sessionModel] - model selection recorded for the
+ *   session, used to resolve the context window (see buildTokenBudget)
  * @returns {TokenBudget|null} Token budget object or null
  */
-function extractCumulativeTokenBudget(sdkMessage) {
+function extractCumulativeTokenBudget(sdkMessage, sessionModel) {
   if (!sdkMessage || typeof sdkMessage !== 'object' || sdkMessage.type !== 'result') {
     return null;
   }
 
   if (sdkMessage.usage && typeof sdkMessage.usage === 'object') {
-    return buildTokenBudget(sdkMessage.usage);
+    return buildTokenBudget(sdkMessage.usage, sessionModel);
   }
 
   if (!sdkMessage.modelUsage || typeof sdkMessage.modelUsage !== 'object') {
@@ -525,7 +534,7 @@ function extractCumulativeTokenBudget(sdkMessage) {
   const inputTokens = readNumber(modelData.cumulativeInputTokens ?? modelData.inputTokens);
   const outputTokens = readNumber(modelData.cumulativeOutputTokens ?? modelData.outputTokens);
   const totalUsed = inputTokens + outputTokens;
-  const contextWindow = parseInt(process.env.CONTEXT_WINDOW, 10) || 160000;
+  const contextWindow = resolveClaudeContextWindow(process.env.CONTEXT_WINDOW, sessionModel, modelKey);
 
   return {
     used: totalUsed,
@@ -958,9 +967,10 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
 
       // Extract and send token budget updates from assistant usage payloads,
       // falling back to the turn's cumulative bill only for SDK builds that
-      // report no per-assistant usage at all.
-      const tokenBudgetData = extractTokenBudget(message)
-        || (assistantBudgetSent ? null : extractCumulativeTokenBudget(message));
+      // report no per-assistant usage at all. resolvedModel carries the
+      // session's model selection (e.g. `opus[1m]`), which sizes the window.
+      const tokenBudgetData = extractTokenBudget(message, resolvedModel)
+        || (assistantBudgetSent ? null : extractCumulativeTokenBudget(message, resolvedModel));
       if (tokenBudgetData) {
         if (message.type === 'assistant') {
           assistantBudgetSent = true;

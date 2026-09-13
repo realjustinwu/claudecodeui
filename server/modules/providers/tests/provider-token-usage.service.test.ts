@@ -70,6 +70,85 @@ test('token usage lookup requires only the app-facing session id for Claude', as
   }
 });
 
+test('a [1m] model selection widens the session context window to 1M', async () => {
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'provider-token-usage-claude-1m-'));
+  const sessionFilePath = path.join(tempDirectory, 'provider-session.jsonl');
+
+  try {
+    // GLM behind the Claude endpoint reports its real model id without the
+    // `[1m]` suffix; only the recorded session selection carries the variant.
+    await writeFile(sessionFilePath, [
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          model: 'glm-5.3',
+          usage: {
+            input_tokens: 1_137,
+            cache_read_input_tokens: 189_632,
+            cache_creation_input_tokens: 0,
+            output_tokens: 1_270,
+          },
+        },
+      }),
+    ].join('\n'));
+
+    const service = createProviderTokenUsageService({
+      getSessionById: () => createSessionRow({
+        model: 'opus[1m]',
+        jsonl_path: sessionFilePath,
+      }),
+    });
+
+    const usage = await service.getSessionTokenUsage('app-session');
+    assert.equal(usage.used, 192_039);
+    assert.equal(usage.total, 1_000_000);
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test('a [1m] model on the transcript row widens the window without a session model', () => {
+  const usage = summarizeClaudeTokenUsage(
+    [{
+      type: 'assistant',
+      message: {
+        model: 'claude-opus-5[1m]',
+        usage: { input_tokens: 10, cache_read_input_tokens: 20, output_tokens: 5 },
+      },
+    }],
+    undefined,
+    null,
+  );
+
+  assert.equal(usage.total, 1_000_000);
+});
+
+test('model inference wins over the CONTEXT_WINDOW setting', () => {
+  // A global env value cannot know which variant a session runs; the
+  // explicitly selected `[1m]` model is the sharper signal.
+  const usage = summarizeClaudeTokenUsage(
+    [{
+      type: 'assistant',
+      message: { usage: { input_tokens: 10, output_tokens: 5 } },
+    }],
+    '180000',
+    'sonnet[1m]',
+  );
+
+  assert.equal(usage.total, 1_000_000);
+});
+
+test('sessions without a window hint fall back to the 200k Claude default', () => {
+  const usage = summarizeClaudeTokenUsage(
+    [{
+      type: 'assistant',
+      message: { model: 'glm-5.3', usage: { input_tokens: 10, output_tokens: 5 } },
+    }],
+  );
+
+  assert.equal(usage.total, 200_000);
+});
+
 test('Codex token usage uses the latest token_count snapshot', async () => {
   const tempDirectory = await mkdtemp(path.join(tmpdir(), 'provider-token-usage-codex-'));
   const sessionFilePath = path.join(tempDirectory, 'rollout-provider-session.jsonl');

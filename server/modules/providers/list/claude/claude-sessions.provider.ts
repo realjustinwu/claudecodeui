@@ -1043,6 +1043,9 @@ export class ClaudeSessionsProvider implements IProviderSessions {
     }
 
     const rawMessages = Array.isArray(result) ? result : (result.messages || []);
+    // The recorded model selection (e.g. `opus[1m]`) sizes the context window
+    // the usage summary is measured against.
+    const sessionModel = sessionsDb.getSessionById(sessionId)?.model ?? null;
 
     const toolResultMap = new Map<string, ClaudeToolResult>();
     for (const raw of rawMessages) {
@@ -1102,7 +1105,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
       // Carried on every page, like the Codex and OpenCode readers do, so the
       // composer's counter tracks the conversation instead of being frozen at
       // whatever it was when the session was opened.
-      tokenUsage: summarizeClaudeTokenUsage(rawMessages),
+      tokenUsage: summarizeClaudeTokenUsage(rawMessages, undefined, sessionModel),
     };
   }
 }

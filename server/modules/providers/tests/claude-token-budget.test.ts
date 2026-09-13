@@ -93,6 +93,44 @@ test('the cumulative reader stays available for SDK builds with no assistant usa
   assert.equal(fromModelUsage.used, 1_200);
 });
 
+test('a [1m] session model widens the budget window to 1M', () => {
+  // The proxy behind the Claude endpoint reports `glm-5.3` on the message;
+  // the variant only survives in the session's recorded model selection.
+  const budget = extractTokenBudget({
+    type: 'assistant',
+    message: {
+      model: 'glm-5.3',
+      usage: { input_tokens: 1_137, cache_read_input_tokens: 189_632, output_tokens: 1_270 },
+    },
+  }, 'opus[1m]');
+
+  assert.ok(budget);
+  assert.equal(budget.total, 1_000_000);
+});
+
+test('a [1m] model reported by the message widens the budget window', () => {
+  const budget = extractTokenBudget({
+    type: 'assistant',
+    message: {
+      model: 'claude-opus-5[1m]',
+      usage: { input_tokens: 12, cache_read_input_tokens: 40_000, output_tokens: 500 },
+    },
+  });
+
+  assert.ok(budget);
+  assert.equal(budget.total, 1_000_000);
+});
+
+test('the cumulative reader honors the session model window too', () => {
+  const budget = extractCumulativeTokenBudget({
+    type: 'result',
+    usage: { input_tokens: 18, cache_read_input_tokens: 40_460, output_tokens: 166 },
+  }, 'opus[1m]');
+
+  assert.ok(budget);
+  assert.equal(budget.total, 1_000_000);
+});
+
 test('the cumulative reader ignores anything that is not a result', () => {
   assert.equal(
     extractCumulativeTokenBudget({
