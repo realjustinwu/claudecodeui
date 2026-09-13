@@ -27,7 +27,18 @@ jobs:
           cache: npm
           registry-url: https://npm.pkg.github.com
 
-      - run: npm ci
+      # npm ci treats optional-dependency fetch failures as non-fatal and
+      # silently skips the package: @openai/codex-linux-x64 (~40MB optional
+      # alias) once got skipped on a registry hiccup ("added 1779" vs 1780)
+      # and failed 10 codex tests that need the CLI binary. Detect and retry.
+      - name: npm ci
+        run: |
+          npm ci
+          if [ ! -d node_modules/@openai/codex-linux-x64 ]; then
+            echo "::warning::codex-linux-x64 missing after npm ci, retrying"
+            npm ci
+            test -d node_modules/@openai/codex-linux-x64
+          fi
       - run: npm run build
       - run: npm test
       - run: npm run test:client
