@@ -5,7 +5,8 @@ import path from 'node:path';
 
 import Database from 'better-sqlite3';
 
-import { sessionsDb } from '@/modules/database/index.js';
+import { sessionsDb, providerModelsDb } from '@/modules/database/index.js';
+import { findClaudeModelOption } from '@/modules/providers/list/claude/claude-models.provider.js';
 import type { AnyRecord } from '@/shared/types.js';
 import { AppError, getOpenCodeDatabasePath } from '@/shared/utils.js';
 
@@ -26,6 +27,7 @@ type ProviderTokenUsageServiceDependencies = {
   readTextFile: (filePath: string) => Promise<string>;
   readTextFileTail: (filePath: string, maxBytes: number) => Promise<FileTail>;
   getClaudeContextWindow: () => string | undefined;
+  getCustomClaudeModelContextWindow: (modelId: string) => number | null;
   isProviderSessionSuperseded: (providerSessionId: string, provider: string) => boolean;
 };
 
@@ -92,6 +94,8 @@ const defaultDependencies: ProviderTokenUsageServiceDependencies = {
     }
   },
   getClaudeContextWindow: () => process.env.CONTEXT_WINDOW,
+  getCustomClaudeModelContextWindow: (modelId: string) =>
+    providerModelsDb.findCustomProviderModelByModelId('claude', modelId)?.contextWindow ?? null,
   isProviderSessionSuperseded: (providerSessionId, provider) =>
     sessionsDb.isProviderSessionSuperseded(providerSessionId, provider),
 };
@@ -131,6 +135,73 @@ async function findCodexSessionFile(
   }
 
   return null;
+}
+
+export const CLAUDE_1M_CONTEXT_WINDOW = 1_000_000;
+/** Historical default from before per-model inference existed; kept for compatibility. */
+const CLAUDE_DEFAULT_CONTEXT_WINDOW = 160_000;
+
+/**
+ * Everything that can pin down a Claude session's context window, most
+ * authoritative first.
+ */
+export type ClaudeContextWindowHints = {
+  /** Window declared on a custom catalog entry for the session's model. */
+  explicitContextWindow?: number | null;
+  /** Window the provider CLI itself reported for the session's model. */
+  reportedContextWindow?: number | null;
+  /** Model names associated with the session: the recorded selection first,
+   * then any model the transcript itself reports. */
+  models?: Array<string | null | undefined>;
+};
+
+/**
+ * Resolves the context window a Claude session's usage should be measured
+ * against, from the sharpest signal available:
+ *
+ * 1. a custom catalog declaration — the user configured this model
+ *    deliberately, so it knows better than anything else
+ * 2. a built-in catalog entry carrying `contextWindow` (e.g. `opus[1m]`)
+ * 3. a `[1m]` suffix on any model name — covers ids the transcript reports
+ *    for a proxy (e.g. `glm-5.3`, no marker) and for real Claude ids alike
+ * 4. a window the provider CLI itself reported for the turn
+ * 5. the CONTEXT_WINDOW setting — global, so it cannot know which variant a
+ *    given session runs, but still better than the fallback
+ * 6. the historical 160k default
+ *
+ * @param hints - per-session signals, most authoritative first
+ * @param configuredContextWindow - raw CONTEXT_WINDOW setting value, if any
+ */
+export function resolveClaudeContextWindow(
+  hints: ClaudeContextWindowHints = {},
+  configuredContextWindow: string | undefined = process.env.CONTEXT_WINDOW,
+): number {
+  const { explicitContextWindow, reportedContextWindow } = hints;
+  const models = hints.models ?? [];
+
+  if (typeof explicitContextWindow === 'number' && explicitContextWindow > 0) {
+    return explicitContextWindow;
+  }
+
+  for (const model of models) {
+    const option = typeof model === 'string' ? findClaudeModelOption(model) : null;
+    if (option?.contextWindow && option.contextWindow > 0) {
+      return option.contextWindow;
+    }
+  }
+
+  if (models.some((model) => typeof model === 'string' && model.includes('[1m]'))) {
+    return CLAUDE_1M_CONTEXT_WINDOW;
+  }
+
+  if (typeof reportedContextWindow === 'number' && reportedContextWindow > 0) {
+    return reportedContextWindow;
+  }
+
+  const parsedContextWindow = Number.parseInt(configuredContextWindow ?? '', 10);
+  return Number.isFinite(parsedContextWindow)
+    ? parsedContextWindow
+    : CLAUDE_DEFAULT_CONTEXT_WINDOW;
 }
 
 /** Newest `token_count` snapshot in the given JSONL text, or null when it has none. */
@@ -193,15 +264,21 @@ function emptyCodexTokenUsage(): TokenUsageResult {
  * cache_creation` is that one request's whole prompt, i.e. what the context
  * window currently holds. Summing turns would count the same cached prefix
  * once per turn.
+ *
+ * The reported `total` is resolved per session from the model names — see
+ * `resolveClaudeContextWindow`.
  */
 export function summarizeClaudeTokenUsage(
   entries: AnyRecord[],
   configuredContextWindow: string | undefined = process.env.CONTEXT_WINDOW,
+  sessionModel?: string | null,
+  explicitContextWindow?: number | null,
 ): TokenUsageResult {
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
+  let usageRowModel: string | null = null;
 
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -237,6 +314,11 @@ export function summarizeClaudeTokenUsage(
       continue;
     }
 
+    // Behind a proxy the transcript reports the upstream model id (e.g.
+    // `glm-5.3`) without the `[1m]` variant marker, so the recorded session
+    // selection stays the primary signal; the row's own model covers sessions
+    // whose selection was never recorded.
+    usageRowModel = typeof entry.message?.model === 'string' ? entry.message.model : null;
     cacheReadTokens = rowCacheReadTokens;
     cacheCreationTokens = rowCacheCreationTokens;
     inputTokens = rowInputTokens;
@@ -244,8 +326,10 @@ export function summarizeClaudeTokenUsage(
     break;
   }
 
-  const parsedContextWindow = Number.parseInt(configuredContextWindow ?? '', 10);
-  const contextWindow = Number.isFinite(parsedContextWindow) ? parsedContextWindow : 160_000;
+  const contextWindow = resolveClaudeContextWindow(
+    { explicitContextWindow, models: [sessionModel, usageRowModel] },
+    configuredContextWindow,
+  );
   const cacheTokens = cacheReadTokens + cacheCreationTokens;
 
   return {
@@ -473,7 +557,15 @@ export function createProviderTokenUsageService(
       if (!claudeEntriesHaveUsage(entries) && !tail.isComplete) {
         entries = parseClaudeUsageEntries(await dependencies.readTextFile(sessionFilePath));
       }
-      return summarizeClaudeTokenUsage(entries, dependencies.getClaudeContextWindow());
+      const customModelContextWindow = session.model
+        ? dependencies.getCustomClaudeModelContextWindow(session.model)
+        : null;
+      return summarizeClaudeTokenUsage(
+        entries,
+        dependencies.getClaudeContextWindow(),
+        session.model,
+        customModelContextWindow,
+      );
     },
   };
 }

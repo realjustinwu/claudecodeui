@@ -21,7 +21,7 @@ import {
   sliceTailPage,
   truncateSubagentActivity,
 } from '@/shared/utils.js';
-import { sessionsDb } from '@/modules/database/index.js';
+import { sessionsDb, providerModelsDb } from '@/modules/database/index.js';
 import { summarizeClaudeTokenUsage } from '@/modules/providers/services/provider-token-usage.service.js';
 
 const PROVIDER = 'claude';
@@ -1043,6 +1043,14 @@ export class ClaudeSessionsProvider implements IProviderSessions {
     }
 
     const rawMessages = Array.isArray(result) ? result : (result.messages || []);
+    // The recorded model selection (e.g. `opus[1m]`, or a custom model with a
+    // declared window) sizes the context window the usage summary measures
+    // against.
+    const sessionRow = sessionsDb.getSessionById(sessionId);
+    const sessionModel = sessionRow?.model ?? null;
+    const customModelContextWindow = sessionModel
+      ? providerModelsDb.findCustomProviderModelByModelId('claude', sessionModel)?.contextWindow ?? null
+      : null;
 
     const toolResultMap = new Map<string, ClaudeToolResult>();
     for (const raw of rawMessages) {
@@ -1102,7 +1110,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
       // Carried on every page, like the Codex and OpenCode readers do, so the
       // composer's counter tracks the conversation instead of being frozen at
       // whatever it was when the session was opened.
-      tokenUsage: summarizeClaudeTokenUsage(rawMessages),
+      tokenUsage: summarizeClaudeTokenUsage(rawMessages, undefined, sessionModel, customModelContextWindow),
     };
   }
 }

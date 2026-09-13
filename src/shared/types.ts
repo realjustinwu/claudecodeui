@@ -14,6 +14,8 @@ export type ProviderModelOption = {
   description?: string;
   recordId?: number;
   isCustom?: boolean;
+  /** Context window (tokens) this model runs with, when known. */
+  contextWindow?: number;
   effort?: {
     default?: string;
     values: {
@@ -33,6 +35,8 @@ export type ProviderModelsDefinition = {
 export type CustomProviderModelInput = {
   model: string;
   id: string;
+  /** Optional context window in tokens; null/undefined clears the value. */
+  contextWindow?: number | null;
 };
 
 /** Mutation callbacks a model menu calls to persist custom provider models. */

@@ -52,6 +52,7 @@ export default function ModelLibraryPanel({
   const [editing, setEditing] = useState<ProviderModelOption | null>(null);
   const [model, setModel] = useState('');
   const [modelId, setModelId] = useState('');
+  const [contextWindow, setContextWindow] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null);
   const [confirmDeleteRecordId, setConfirmDeleteRecordId] = useState<number | null>(null);
@@ -79,6 +80,7 @@ export default function ModelLibraryPanel({
     setEditing(null);
     setModel('');
     setModelId('');
+    setContextWindow('');
     setError(null);
   };
 
@@ -93,6 +95,7 @@ export default function ModelLibraryPanel({
     setEditing(option);
     setModel(option.label);
     setModelId(option.value);
+    setContextWindow(option.contextWindow ? String(option.contextWindow) : '');
     setConfirmDeleteRecordId(null);
     setNotice(null);
     setError(null);
@@ -111,6 +114,18 @@ export default function ModelLibraryPanel({
       return;
     }
 
+    const normalizedContextWindow = contextWindow.trim();
+    let parsedContextWindow: number | null | undefined;
+    if (!normalizedContextWindow) {
+      parsedContextWindow = null;
+    } else {
+      parsedContextWindow = Number(normalizedContextWindow);
+      if (!Number.isInteger(parsedContextWindow) || parsedContextWindow <= 0) {
+        setError('Context window must be a positive whole number of tokens.');
+        return;
+      }
+    }
+
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -119,12 +134,14 @@ export default function ModelLibraryPanel({
         await actions.update(selectedProvider, editing, {
           model: normalizedModel,
           id: normalizedId,
+          contextWindow: parsedContextWindow,
         });
         setNotice(`${normalizedModel} was updated.`);
       } else {
         await actions.create(selectedProvider, {
           model: normalizedModel,
           id: normalizedId,
+          contextWindow: parsedContextWindow,
         });
         setNotice(`${normalizedModel} was added.`);
       }
@@ -260,6 +277,22 @@ export default function ModelLibraryPanel({
           />
           <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
             Use the exact identifier accepted by the provider CLI. IDs cannot contain spaces.
+          </p>
+
+          <label className="mt-4 block text-xs font-semibold text-foreground" htmlFor="custom-model-context-window">
+            Context window (tokens, optional)
+          </label>
+          <Input
+            id="custom-model-context-window"
+            value={contextWindow}
+            onChange={(event) => setContextWindow(event.target.value)}
+            inputMode="numeric"
+            placeholder="e.g. 1000000"
+            autoComplete="off"
+            className="mt-1.5 h-10 rounded-xl bg-background font-mono"
+          />
+          <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
+            Sizes the token-usage meter for this model. Leave empty to fall back to the provider default.
           </p>
 
           {error && (

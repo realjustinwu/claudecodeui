@@ -79,6 +79,11 @@ export type ProviderModelOption = {
   recordId?: number;
   /** True for user-created rows; false for immutable CloudCLI defaults. */
   isCustom?: boolean;
+  /**
+   * Context window (tokens) this model runs with, when known. Token-usage
+   * counters measure `used` against this instead of a global default.
+   */
+  contextWindow?: number;
   effort?: {
     default?: string;
     values: {
@@ -110,6 +115,8 @@ export type CustomProviderModelRecord = {
   modelId: string;
   model: string;
   sortOrder: number;
+  /** User-declared context window in tokens; null when unset. */
+  contextWindow: number | null;
 };
 
 /**
@@ -122,6 +129,8 @@ export type CustomProviderModelRecord = {
 export type CustomProviderModelInput = {
   id: string;
   model: string;
+  /** Optional context window in tokens; null/undefined clears the value. */
+  contextWindow?: number | null;
 };
 
 // ---------------------------

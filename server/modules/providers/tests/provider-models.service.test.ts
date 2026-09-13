@@ -69,6 +69,7 @@ const createCatalogStore = () => {
         modelId: input.id,
         model: input.model,
         sortOrder: readRows(provider).length,
+        contextWindow: input.contextWindow ?? null,
       };
       rows.set(provider, [...readRows(provider), record]);
       return record;
@@ -82,7 +83,7 @@ const createCatalogStore = () => {
       if (!existing) {
         return null;
       }
-      const updated = { ...existing, modelId: input.id, model: input.model };
+      const updated = { ...existing, modelId: input.id, model: input.model, contextWindow: input.contextWindow ?? null };
       rows.set(provider, readRows(provider).map((record) => (
         record.recordId === recordId ? updated : record
       )));
@@ -147,18 +148,23 @@ test('custom models can be created, edited, and deleted', async () => {
   const created = await service.createCustomModel('claude', {
     model: 'My Claude',
     id: 'claude-my-model',
+    contextWindow: 1_000_000,
   });
   const recordId = created.model.recordId as number;
 
   assert.equal(created.model.isCustom, true);
+  assert.equal(created.model.contextWindow, 1_000_000);
   assert.equal(created.models.OPTIONS.at(-1)?.value, 'claude-my-model');
 
   const updated = await service.updateCustomModel('claude', recordId, {
     model: 'My Better Claude',
     id: 'claude-my-model-v2',
+    // Non-positive values clear the declaration rather than persisting junk.
+    contextWindow: 0,
   });
   assert.equal(updated.model.label, 'My Better Claude');
   assert.equal(updated.model.value, 'claude-my-model-v2');
+  assert.equal(updated.model.contextWindow, undefined);
 
   const removed = await service.deleteCustomModel('claude', recordId);
   assert.equal(removed.model.value, 'claude-my-model-v2');
