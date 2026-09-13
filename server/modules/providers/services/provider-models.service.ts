@@ -43,6 +43,7 @@ const toCustomProviderModelOption = (
   label: record.model,
   recordId: record.recordId,
   isCustom: true,
+  contextWindow: record.contextWindow ?? undefined,
 });
 
 const mergeProviderModels = (
@@ -61,6 +62,10 @@ const mergeProviderModels = (
 const normalizeCustomModelInput = (input: CustomProviderModelInput): CustomProviderModelInput => ({
   id: input.id.trim(),
   model: input.model.trim(),
+  // A declared window only counts when positive; anything else clears it.
+  contextWindow: Number.isFinite(input.contextWindow) && Number(input.contextWindow) > 0
+    ? Math.round(Number(input.contextWindow))
+    : null,
 });
 
 const isUniqueConstraintError = (error: unknown): boolean => (

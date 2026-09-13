@@ -192,29 +192,40 @@ test('model routes expose immutable defaults and full custom model CRUD', async 
     const createResponse = await fetch(`${baseUrl}/api/providers/codex/models`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'Gateway GPT', id: 'gateway/gpt' }),
+      body: JSON.stringify({ model: 'Gateway GPT', id: 'gateway/gpt', contextWindow: 1_000_000 }),
     });
     const createPayload = await createResponse.json() as {
-      data: { model: { recordId: number; value: string; label: string; isCustom: boolean } };
+      data: { model: { recordId: number; value: string; label: string; isCustom: boolean; contextWindow?: number } };
     };
     assert.equal(createResponse.status, 201);
     assert.equal(createPayload.data.model.isCustom, true);
+    assert.equal(createPayload.data.model.contextWindow, 1_000_000);
     const customRecordId = createPayload.data.model.recordId;
+
+    const invalidWindowResponse = await fetch(`${baseUrl}/api/providers/codex/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'Bad Window', id: 'gateway/bad', contextWindow: -5 }),
+    });
+    const invalidWindowPayload = await invalidWindowResponse.json() as { error: { code: string } };
+    assert.equal(invalidWindowResponse.status, 400);
+    assert.equal(invalidWindowPayload.error.code, 'INVALID_CONTEXT_WINDOW');
 
     const updateResponse = await fetch(
       `${baseUrl}/api/providers/codex/models/${customRecordId}`,
       {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'Gateway GPT Updated', id: 'gateway/gpt-v2' }),
+        body: JSON.stringify({ model: 'Gateway GPT Updated', id: 'gateway/gpt-v2', contextWindow: null }),
       },
     );
     const updatePayload = await updateResponse.json() as {
-      data: { model: { value: string; label: string } };
+      data: { model: { value: string; label: string; contextWindow?: number } };
     };
     assert.equal(updateResponse.status, 200);
     assert.equal(updatePayload.data.model.value, 'gateway/gpt-v2');
     assert.equal(updatePayload.data.model.label, 'Gateway GPT Updated');
+    assert.equal(updatePayload.data.model.contextWindow, undefined);
 
     const immutableResponse = await fetch(
       `${baseUrl}/api/providers/codex/models/999999`,

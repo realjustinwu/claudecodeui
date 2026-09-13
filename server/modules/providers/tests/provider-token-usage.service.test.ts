@@ -53,6 +53,7 @@ test('token usage lookup requires only the app-facing session id for Claude', as
     const service = createProviderTokenUsageService({
       getSessionById: () => createSessionRow({ jsonl_path: sessionFilePath }),
       getClaudeContextWindow: () => '180000',
+      getCustomClaudeModelContextWindow: () => null,
     });
 
     assert.deepEqual(await service.getSessionTokenUsage('app-session'), {
@@ -97,6 +98,7 @@ test('a [1m] model selection widens the session context window to 1M', async () 
         model: 'opus[1m]',
         jsonl_path: sessionFilePath,
       }),
+      getCustomClaudeModelContextWindow: () => null,
     });
 
     const usage = await service.getSessionTokenUsage('app-session');
@@ -138,7 +140,7 @@ test('model inference wins over the CONTEXT_WINDOW setting', () => {
   assert.equal(usage.total, 1_000_000);
 });
 
-test('sessions without a window hint fall back to the 200k Claude default', () => {
+test('sessions without a window hint keep the historical 160k default', () => {
   const usage = summarizeClaudeTokenUsage(
     [{
       type: 'assistant',
@@ -146,7 +148,40 @@ test('sessions without a window hint fall back to the 200k Claude default', () =
     }],
   );
 
-  assert.equal(usage.total, 200_000);
+  assert.equal(usage.total, 160_000);
+});
+
+test('a custom model with a declared window sizes the session against it', async () => {
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'provider-token-usage-claude-custom-'));
+  const sessionFilePath = path.join(tempDirectory, 'provider-session.jsonl');
+
+  try {
+    await writeFile(sessionFilePath, [
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          model: 'glm-5.3',
+          usage: { input_tokens: 500, cache_read_input_tokens: 9_500, output_tokens: 300 },
+        },
+      }),
+    ].join('\n'));
+
+    const service = createProviderTokenUsageService({
+      getSessionById: () => createSessionRow({
+        model: 'glm-custom-1m',
+        jsonl_path: sessionFilePath,
+      }),
+      getCustomClaudeModelContextWindow: (modelId) => (
+        modelId === 'glm-custom-1m' ? 2_000_000 : null
+      ),
+    });
+
+    const usage = await service.getSessionTokenUsage('app-session');
+    assert.equal(usage.used, 10_300);
+    assert.equal(usage.total, 2_000_000);
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
 });
 
 test('Codex token usage uses the latest token_count snapshot', async () => {
@@ -378,6 +413,7 @@ test('Claude token usage falls back to the whole file when the tail has no usage
     const service = createProviderTokenUsageService({
       getSessionById: () => createSessionRow({ jsonl_path: sessionFilePath }),
       getClaudeContextWindow: () => '180000',
+      getCustomClaudeModelContextWindow: () => null,
     });
 
     const usage = await service.getSessionTokenUsage('app-session');

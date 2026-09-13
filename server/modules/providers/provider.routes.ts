@@ -501,7 +501,21 @@ const parseCustomProviderModelPayload = (payload: unknown): CustomProviderModelI
     });
   }
 
-  return { model, id };
+  let contextWindow: number | null | undefined;
+  if (body.contextWindow !== undefined && body.contextWindow !== null && body.contextWindow !== '') {
+    const parsedContextWindow = Number(body.contextWindow);
+    if (!Number.isInteger(parsedContextWindow) || parsedContextWindow <= 0) {
+      throw new AppError('contextWindow must be a positive integer number of tokens.', {
+        code: 'INVALID_CONTEXT_WINDOW',
+        statusCode: 400,
+      });
+    }
+    contextWindow = parsedContextWindow;
+  } else if (body.contextWindow === null || body.contextWindow === '') {
+    contextWindow = null;
+  }
+
+  return { model, id, contextWindow };
 };
 
 router.get(

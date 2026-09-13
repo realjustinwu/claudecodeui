@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS provider_models (
     model_id TEXT NOT NULL,
     model_name TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    context_window INTEGER DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(provider, model_id)

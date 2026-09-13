@@ -33,6 +33,7 @@ test('provider model repository stores custom rows only and maintains session re
       'model_id',
       'model_name',
       'sort_order',
+      'context_window',
       'created_at',
       'updated_at',
     ]);
@@ -41,8 +42,10 @@ test('provider model repository stores custom rows only and maintains session re
     const custom = providerModelsDb.createCustomProviderModel('codex', {
       model: 'Private Gateway Model',
       id: 'gateway/model-v1',
+      contextWindow: 1_000_000,
     });
     assert.equal(custom.modelId, 'gateway/model-v1');
+    assert.equal(custom.contextWindow, 1_000_000);
     assert.equal(
       providerModelsDb.findCustomProviderModelByModelId('codex', 'gateway/model-v1')?.recordId,
       custom.recordId,

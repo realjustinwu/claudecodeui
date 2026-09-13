@@ -131,6 +131,35 @@ test('the cumulative reader honors the session model window too', () => {
   assert.equal(budget.total, 1_000_000);
 });
 
+test('a declared catalog window outranks the [1m] suffix', () => {
+  const budget = extractTokenBudget({
+    type: 'assistant',
+    message: {
+      model: 'glm-5.3',
+      usage: { input_tokens: 100, cache_read_input_tokens: 900, output_tokens: 50 },
+    },
+  }, 'opus[1m]', 2_000_000);
+
+  assert.ok(budget);
+  assert.equal(budget.total, 2_000_000);
+});
+
+test('the cumulative reader prefers the window the CLI itself reported', () => {
+  const budget = extractCumulativeTokenBudget({
+    type: 'result',
+    modelUsage: {
+      'claude-sonnet-5': {
+        cumulativeInputTokens: 1_000,
+        cumulativeOutputTokens: 200,
+        contextWindow: 256_000,
+      },
+    },
+  });
+
+  assert.ok(budget);
+  assert.equal(budget.total, 256_000);
+});
+
 test('the cumulative reader ignores anything that is not a result', () => {
   assert.equal(
     extractCumulativeTokenBudget({

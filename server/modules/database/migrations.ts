@@ -504,6 +504,14 @@ export const runMigrations = (db: Database) => {
       CREATE INDEX IF NOT EXISTS idx_provider_models_provider_order
       ON provider_models(provider, sort_order, id)
     `);
+    const providerModelsTableInfo = db.prepare('PRAGMA table_info(provider_models)').all() as { name: string }[];
+    addColumnToTableIfNotExists(
+      db,
+      'provider_models',
+      providerModelsTableInfo.map((column) => column.name),
+      'context_window',
+      'INTEGER DEFAULT NULL'
+    );
     db.exec(USER_PREFERENCES_TABLE_SCHEMA_SQL);
     db.exec(SESSION_DRAFTS_TABLE_SCHEMA_SQL);
     db.exec(SUPERSEDED_PROVIDER_SESSIONS_TABLE_SCHEMA_SQL);

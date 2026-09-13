@@ -90,6 +90,7 @@ export const CLAUDE_PREDEFINED_MODELS: ProviderModelsDefinition = {
       value: 'sonnet[1m]',
       label: 'Sonnet (1M context)',
       description: 'Latest Sonnet model with a 1M context window.',
+      contextWindow: 1_000_000,
       effort: {
         default: 'high',
         values: [
@@ -122,6 +123,7 @@ export const CLAUDE_PREDEFINED_MODELS: ProviderModelsDefinition = {
       value: 'opus[1m]',
       label: 'Opus (1M context)',
       description: 'Latest Opus model with a 1M context window.',
+      contextWindow: 1_000_000,
       effort: {
         default: 'high',
         values: [
