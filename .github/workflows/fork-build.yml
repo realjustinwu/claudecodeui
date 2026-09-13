@@ -1,0 +1,50 @@
+# Fork-only packaging pipeline: builds the develop branch and publishes
+# @realjustinwu/cloudcli to the GitHub Packages npm registry for personal
+# use while PRs wait upstream. Upstream's own release path is release.yml.
+name: fork-build
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:client
+
+      # The repo's package.json stays upstream-identical (@cloudcli-ai/cloudcli,
+      # upstream version); the fork identity exists only at publish time so
+      # merging upstream never conflicts on these fields.
+      - name: Rewrite package identity for GitHub Packages
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.name = "@realjustinwu/cloudcli";
+            pkg.version = "1.37.4-fork.${{ github.run_number }}";
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
+
+      - run: npm publish --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
