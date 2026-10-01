@@ -1,4 +1,4 @@
-import { AppError } from '@/shared/utils.js';
+import { AppError, IS_PLATFORM } from '@/shared/utils.js';
 
 type AuthUser = {
   id: number | bigint;
@@ -44,7 +44,8 @@ export function createAuthService(dependencies: AuthDependencies) {
     getStatus() {
       return {
         needsSetup: !dependencies.users.hasUsers(),
-        isAuthenticated: false,
+        // 平台模式（统一由外部网关验证）：前端据此跳过登录页
+        isAuthenticated: IS_PLATFORM,
       };
     },
 
