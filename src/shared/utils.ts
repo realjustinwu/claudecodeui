@@ -8,8 +8,16 @@ import type { Project, ProjectSession } from '@/shared/types';
 /**
  * Indicates whether the app runs in Platform mode (hosted) or OSS mode (self-hosted).
  * Read it to hide or gate features that only exist in one of the two deployments.
+ *
+ * Can also be enabled at runtime (no rebuild) by having the reverse proxy inject
+ * `<script>window.__CLOUDCLI_PLATFORM__=true</script>` into the served index.html —
+ * used when cloudcli sits behind an external auth gateway (e.g. Authelia forward-auth)
+ * so the same package serves both modes: gateway-fronted (platform) and standalone.
  */
-export const IS_PLATFORM = import.meta.env?.VITE_IS_PLATFORM === 'true';
+export const IS_PLATFORM =
+  import.meta.env?.VITE_IS_PLATFORM === 'true' ||
+  (typeof window !== 'undefined' &&
+    (window as unknown as { __CLOUDCLI_PLATFORM__?: boolean }).__CLOUDCLI_PLATFORM__ === true);
 
 // ---------------------------
 
