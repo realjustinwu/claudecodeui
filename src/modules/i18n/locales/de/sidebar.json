@@ -125,8 +125,7 @@
     "deleteSessionsPartialFailure_other": "{{count}} von {{total}} Sitzungen konnten nicht gelöscht werden. Bitte erneut versuchen."
   },
   "version": {
-    "updateAvailable": "Update verfügbar",
-    "restartRequired": "Update installiert – zum Anwenden Server neu starten"
+    "updateAvailable": "Update verfügbar"
   },
   "search": {
     "modeProjects": "Projekte",

@@ -122,8 +122,7 @@
     "deleteSessionsPartialFailure": "{{total}}件中{{count}}件のセッションを削除できませんでした。もう一度お試しください。"
   },
   "version": {
-    "updateAvailable": "アップデートあり",
-    "restartRequired": "更新が適用されていません。サーバーを再起動してください"
+    "updateAvailable": "アップデートあり"
   },
   "search": {
     "modeProjects": "プロジェクト",

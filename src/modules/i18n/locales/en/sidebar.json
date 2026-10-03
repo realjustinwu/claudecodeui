@@ -126,8 +126,7 @@
     "deleteSessionsPartialFailure_other": "{{count}} of {{total}} sessions could not be deleted. Please try again."
   },
   "version": {
-    "updateAvailable": "Update available",
-    "restartRequired": "Update installed — restart the server to apply"
+    "updateAvailable": "Update available"
   },
   "search": {
     "modeProjects": "Projects",

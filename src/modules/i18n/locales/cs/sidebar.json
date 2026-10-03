@@ -128,8 +128,7 @@
     "forkSessionError": "Tuto relaci se nepodařilo forknout. Zkuste to prosím znovu."
   },
   "version": {
-    "updateAvailable": "Je dostupná aktualizace",
-    "restartRequired": "Aktualizace nainstalována – restartujte server, aby se projevila"
+    "updateAvailable": "Je dostupná aktualizace"
   },
   "search": {
     "modeProjects": "Projekty",

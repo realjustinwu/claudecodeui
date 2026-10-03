@@ -125,8 +125,7 @@
     "deleteSessionsPartialFailure_other": "{{count}} dari {{total}} sesi gagal dihapus. Silakan coba lagi."
   },
   "version": {
-    "updateAvailable": "Pembaruan tersedia",
-    "restartRequired": "Pembaruan terpasang — mulai ulang server untuk menerapkan"
+    "updateAvailable": "Pembaruan tersedia"
   },
   "search": {
     "modeProjects": "Proyek",

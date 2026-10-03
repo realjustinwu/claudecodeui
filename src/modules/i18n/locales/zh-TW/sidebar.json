@@ -124,8 +124,7 @@
     "deleteSessionsPartialFailure_other": "{{total}} 個工作階段中有 {{count}} 個刪除失敗，請重試。"
   },
   "version": {
-    "updateAvailable": "有可用更新",
-    "restartRequired": "已安裝更新 — 請重新啟動伺服器以套用"
+    "updateAvailable": "有可用更新"
   },
   "search": {
     "modeProjects": "專案",

@@ -125,8 +125,7 @@
     "deleteSessionsPartialFailure_other": "{{total}} 个会话中有 {{count}} 个删除失败，请重试。"
   },
   "version": {
-    "updateAvailable": "有可用更新",
-    "restartRequired": "已安装更新 — 请重启服务器以生效"
+    "updateAvailable": "有可用更新"
   },
   "search": {
     "modeProjects": "项目",

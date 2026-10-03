@@ -125,8 +125,7 @@
     "deleteSessionsPartialFailure_other": "No se pudieron eliminar {{count}} de {{total}} sesiones. Inténtalo de nuevo."
   },
   "version": {
-    "updateAvailable": "Actualización disponible",
-    "restartRequired": "Actualización instalada — reinicia el servidor para aplicarla"
+    "updateAvailable": "Actualización disponible"
   },
   "search": {
     "modeProjects": "Proyectos",

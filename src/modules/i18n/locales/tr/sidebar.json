@@ -125,8 +125,7 @@
     "deleteSessionsPartialFailure_other": "{{total}} oturumdan {{count}} tanesi silinemedi. Lütfen tekrar dene."
   },
   "version": {
-    "updateAvailable": "Güncelleme mevcut",
-    "restartRequired": "Güncelleme yüklendi — uygulamak için sunucuyu yeniden başlatın"
+    "updateAvailable": "Güncelleme mevcut"
   },
   "search": {
     "modeProjects": "Projeler",
