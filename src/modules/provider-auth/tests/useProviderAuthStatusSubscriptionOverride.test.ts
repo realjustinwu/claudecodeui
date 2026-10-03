@@ -43,6 +43,9 @@ describe('useProviderAuthStatus subscription override', () => {
       method: 'api_key',
       error: null,
       loading: false,
+      // Fork: the hook passes the CLI install probe through (pi provider's
+      // settings panel renders it); the payloads above include it.
+      installed: true,
       subscriptionOverride: { variable: 'ANTHROPIC_API_KEY', source: 'process_env', subscriptionEmail: null },
     });
   });
@@ -67,6 +70,7 @@ describe('useProviderAuthStatus subscription override', () => {
       method: 'credentials_file',
       error: null,
       loading: false,
+      installed: true,
     });
     expect('subscriptionOverride' in result.current.providerAuthStatus.claude).toBe(false);
   });
