@@ -1073,7 +1073,9 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
         await spawnPi(message.trim(), {
           projectPath: finalProjectPath,
           cwd: finalProjectPath,
-          sessionId: sessionId || null,
+          // Like the other providers: the app session id keys the run
+          // registry and the pi process map, so chat.abort finds the run.
+          sessionId: appSessionId,
           model: model || piModels.DEFAULT,
           effort,
           permissionMode: 'bypassPermissions' // Agent runs are non-interactive, like the other providers above
