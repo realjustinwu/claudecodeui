@@ -17,7 +17,12 @@ function ProjectWorkspaceShell({
   return (
     <div
       className="fixed inset-0 flex bg-background"
-      style={{ bottom: 'var(--keyboard-height, 0px)' }}
+      style={{
+        bottom: 'var(--keyboard-height, 0px)',
+        // Set by useVisualViewportKeyboardOffset: cancels iOS's visual-viewport
+        // pan while the keyboard is open so the shell stays fully on screen.
+        transform: 'var(--shell-transform, none)',
+      }}
     >
       <ProjectEffects navigate={navigate} />
       <ProjectSidebarRegion isMobile={isMobile} />
