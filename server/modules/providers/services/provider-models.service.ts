@@ -1,5 +1,6 @@
 import { providerModelsDb, sessionsDb } from '@/modules/database/index.js';
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
+import { providerCapabilitiesService } from '@/modules/providers/services/provider-capabilities.service.js';
 import type { IProvider } from '@/shared/interfaces.js';
 import type {
   CustomProviderModelInput,
@@ -36,6 +37,15 @@ type ProviderModelsServiceDependencies = {
   sessions?: ProviderModelsSessionStore;
 };
 
+/**
+ * Converts a stored custom row into a catalog option.
+ *
+ * `effort` is emitted in the same shape predefined models use, so the composer
+ * and every runtime's effort validation treat declared levels identically.
+ * Rows without declared levels omit `effort` on purpose: the composer then
+ * hides Reasoning and runtimes send no effort, instead of guessing levels the
+ * model might reject.
+ */
 const toCustomProviderModelOption = (
   record: CustomProviderModelRecord,
 ): ProviderModelOption => ({
@@ -44,9 +54,32 @@ const toCustomProviderModelOption = (
   recordId: record.recordId,
   isCustom: true,
   contextWindow: record.contextWindow ?? undefined,
+  ...(record.effort
+    ? {
+      effort: {
+        ...(record.effort.default ? { default: record.effort.default } : {}),
+        values: record.effort.values.map((value) => ({ value })),
+      },
+    }
+    : {}),
 });
 
+/**
+ * Effort levels a custom model of this provider may declare, weakest first:
+ * the levels its runtime can pass on, from the capability matrix. Empty
+ * (Cursor) means no effort support at all.
+ *
+ * Deliberately not derived from the predefined models: OpenCode narrows its
+ * catalog to the upstream providers this machine has connected, and only its
+ * OpenCode Go models declare effort, so a catalog-derived set would vanish for
+ * Zen, Anthropic, or OpenAI users and change with unrelated credentials.
+ */
+const readCustomModelEffortLevels = (provider: LLMProvider): string[] => (
+  providerCapabilitiesService.getProviderCapabilities(provider).effortLevels
+);
+
 const mergeProviderModels = (
+  provider: LLMProvider,
   predefined: ProviderModelsDefinition,
   custom: CustomProviderModelRecord[],
 ): ProviderModelsDefinition => {
@@ -56,6 +89,8 @@ const mergeProviderModels = (
       ...custom.map(toCustomProviderModelOption),
     ],
     DEFAULT: predefined.DEFAULT,
+    // Copied so no caller can mutate the shared capability matrix.
+    EFFORT_LEVELS: [...readCustomModelEffortLevels(provider)],
   };
 };
 
@@ -66,7 +101,37 @@ const normalizeCustomModelInput = (input: CustomProviderModelInput): CustomProvi
   contextWindow: Number.isFinite(input.contextWindow) && Number(input.contextWindow) > 0
     ? Math.round(Number(input.contextWindow))
     : null,
+  ...(input.effort === undefined ? {} : { effort: input.effort }),
 });
+
+const assertEffortLevelsSupported = (
+  provider: LLMProvider,
+  input: CustomProviderModelInput,
+): void => {
+  const declaredLevels = input.effort?.values ?? [];
+  if (declaredLevels.length === 0) {
+    return;
+  }
+
+  const supportedLevels = readCustomModelEffortLevels(provider);
+  if (supportedLevels.length === 0) {
+    throw new AppError(`${provider} models do not support reasoning effort.`, {
+      code: 'MODEL_EFFORT_NOT_SUPPORTED',
+      statusCode: 400,
+    });
+  }
+
+  const unsupportedLevel = declaredLevels.find((level) => !supportedLevels.includes(level));
+  if (unsupportedLevel) {
+    throw new AppError(
+      `"${unsupportedLevel}" is not a ${provider} effort level. Use one of: ${supportedLevels.join(', ')}.`,
+      {
+        code: 'INVALID_MODEL_EFFORT',
+        statusCode: 400,
+      },
+    );
+  }
+};
 
 const isUniqueConstraintError = (error: unknown): boolean => (
   error !== null
@@ -92,7 +157,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
 
   const getProviderModels = async (provider: LLMProvider): Promise<ProviderModelsDefinition> => {
     const predefined = await resolveProvider(provider).models.getSupportedModels();
-    return mergeProviderModels(predefined, catalog.listCustomProviderModels(provider));
+    return mergeProviderModels(provider, predefined, catalog.listCustomProviderModels(provider));
   };
 
   const getCurrentActiveModel = async (
@@ -144,12 +209,13 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     const predefined = await resolveProvider(provider).models.getSupportedModels();
     const normalized = normalizeCustomModelInput(input);
     assertModelIdAvailable(provider, predefined, normalized.id);
+    assertEffortLevelsSupported(provider, normalized);
 
     try {
       const created = catalog.createCustomProviderModel(provider, normalized);
       return {
         model: toCustomProviderModelOption(created),
-        models: mergeProviderModels(predefined, catalog.listCustomProviderModels(provider)),
+        models: mergeProviderModels(provider, predefined, catalog.listCustomProviderModels(provider)),
       };
     } catch (error) {
       if (isUniqueConstraintError(error)) {
@@ -171,6 +237,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     readCustomModel(provider, recordId);
     const normalized = normalizeCustomModelInput(input);
     assertModelIdAvailable(provider, predefined, normalized.id, recordId);
+    assertEffortLevelsSupported(provider, normalized);
 
     try {
       const updated = catalog.updateCustomProviderModel(provider, recordId, normalized);
@@ -183,7 +250,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
 
       return {
         model: toCustomProviderModelOption(updated),
-        models: mergeProviderModels(predefined, catalog.listCustomProviderModels(provider)),
+        models: mergeProviderModels(provider, predefined, catalog.listCustomProviderModels(provider)),
       };
     } catch (error) {
       if (isUniqueConstraintError(error)) {
@@ -212,7 +279,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
 
     return {
       model: toCustomProviderModelOption(removed),
-      models: mergeProviderModels(predefined, catalog.listCustomProviderModels(provider)),
+      models: mergeProviderModels(provider, predefined, catalog.listCustomProviderModels(provider)),
     };
   };
 
