@@ -1,6 +1,7 @@
 // @ts-nocheck -- JWT request augmentation is narrowed by Auth route contracts.
-import jwt from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
+
+import jwt from 'jsonwebtoken';
 
 import { IS_PLATFORM } from '@/shared/utils.js';
 
