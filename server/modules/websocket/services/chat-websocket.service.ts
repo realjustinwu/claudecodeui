@@ -157,6 +157,17 @@ async function handleChatSend(
     return;
   }
 
+  // Per-user ownership: another account's session answers as missing.
+  // NULL-owned rows stay usable by everyone (legacy/disk-synced).
+  if (
+    resolved.session.user_id != null &&
+    userId != null &&
+    Number(resolved.session.user_id) !== Number(userId)
+  ) {
+    sendProtocolError(ws, 'SESSION_NOT_FOUND', `Session "${resolved.sessionId}" was not found.`, resolved.sessionId);
+    return;
+  }
+
   await dispatchRun(ws, userId, resolved.sessionId, resolved.session, data, dependencies);
 }
 
@@ -663,6 +674,8 @@ export function handleChatConnection(
   connectedClients.add(ws);
 
   const userId = readRequestUserId(request);
+  // Tag the socket for per-user broadcast filtering (session-upsert events).
+  (ws as { __wgUserId?: number | string | null }).__wgUserId = userId ?? null;
 
   ws.on('message', async (rawMessage) => {
     try {

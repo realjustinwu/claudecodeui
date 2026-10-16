@@ -591,6 +591,25 @@ const ensureProjectsForSessionPaths = (db: Database): void => {
   `);
 };
 
+const addSessionUserIdColumn = (db: Database): void => {
+  const sessionsTableInfo = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
+  addColumnToTableIfNotExists(
+    db,
+    'sessions',
+    sessionsTableInfo.map((column) => column.name),
+    'user_id',
+    'INTEGER'
+  );
+  // Legacy rows predate per-user ownership: attribute them to the first
+  // active account so the original owner keeps seeing their history after
+  // the upgrade instead of every session vanishing into NULL-limbo.
+  db.exec(`
+    UPDATE sessions
+    SET user_id = (SELECT id FROM users WHERE is_active = 1 ORDER BY id LIMIT 1)
+    WHERE user_id IS NULL
+  `);
+};
+
 export const runMigrations = (db: Database) => {
   try {
     const usersTableInfo = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
@@ -646,6 +665,7 @@ export const runMigrations = (db: Database) => {
     addSessionModelColumn(db);
     addSessionEffortColumn(db);
     addForkedFromSessionIdColumn(db);
+    addSessionUserIdColumn(db);
     ensureProjectsForSessionPaths(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);
 
@@ -657,6 +677,7 @@ export const runMigrations = (db: Database) => {
     db.exec('CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due ON scheduled_messages(status, scheduled_for)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_scheduled_messages_session ON scheduled_messages(session_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_is_archived ON sessions(isArchived)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_projects_is_starred ON projects(isStarred)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_projects_is_archived ON projects(isArchived)');
 

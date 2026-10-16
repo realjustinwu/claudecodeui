@@ -6,6 +6,7 @@ import express from 'express';
 import type { ProviderRunFunction } from '@/shared/types.js';
 
 import { normalizeProjectPath } from '../../shared/utils.js';
+import { isProjectPathAllowedForUser } from '../../shared/user-dirs.js';
 
 /** What the route reads off a session row it continues: the row, not the request, says which provider and project a session belongs to. */
 type AgentSessionRow = {
@@ -30,7 +31,7 @@ type AgentRouterDependencies = {
   sessions: {
     getSessionById(sessionId: string): AgentSessionRow | null;
     getSessionByProviderSessionId(providerSessionId: string): AgentSessionRow | null;
-    createAppSession(provider: string, projectPath: string, initialMessage: string): { sessionId: string };
+    createAppSession(provider: string, projectPath: string, initialMessage: string, userId?: number | null): { sessionId: string };
   };
   /** The live-run registry the chat socket uses; registering here is what puts an API run on the running-sessions list. */
   runs: Pick<typeof import('../websocket/index.js').chatRunRegistry, 'startRun' | 'completeRunIfCurrent' | 'isProcessing'>;
@@ -912,6 +913,14 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
       if (requestedProvider !== null && requestedProvider !== sessionRow.provider) {
         return res.status(400).json({ error: `Session "${sessionRow.session_id}" belongs to provider "${sessionRow.provider}"` });
       }
+      // Per-user ownership: another account's session is indistinguishable
+      // from a missing one. NULL-owned rows stay usable by everyone.
+      if (
+        sessionRow.user_id != null &&
+        Number(sessionRow.user_id) !== Number(req.user.id)
+      ) {
+        return res.status(404).json({ error: `Session "${sessionId}" was not found` });
+      }
       // Refused before any side effect — a clone per retry would pile up
       // under external-projects. startRun below still has the last word.
       if (runRegistry.isProcessing(sessionRow.session_id)) {
@@ -959,6 +968,16 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
 
       finalProjectPath = normalizeProjectPath(finalProjectPath);
 
+      // Per-user workspace guard: the users/ tree is partitioned by account —
+      // both for plain paths and GitHub-clone targets. Applies to new runs;
+      // a continued session already passed this at creation time.
+      if (
+        !sessionRow &&
+        !isProjectPathAllowedForUser(finalProjectPath, String(req.user.username))
+      ) {
+        return res.status(403).json({ error: 'Sessions cannot be started inside another account\u2019s workspace.' });
+      }
+
       // A continued session runs where it lives, as a chat send does; a
       // request that resolved to another directory is not that session.
       if (sessionRow && sessionRow.project_path && normalizeProjectPath(sessionRow.project_path) !== finalProjectPath) {
@@ -978,7 +997,7 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
       // the provider-native id is mapped onto it when the runtime announces it.
       const appSessionId = sessionRow
         ? sessionRow.session_id
-        : sessionGateway.createAppSession(provider, finalProjectPath, message.trim()).sessionId;
+        : sessionGateway.createAppSession(provider, finalProjectPath, message.trim(), req.user.id).sessionId;
 
       // Registered before any header goes out, so a session already mid-run
       // is refused with a plain 409 rather than an empty stream. The HTTP

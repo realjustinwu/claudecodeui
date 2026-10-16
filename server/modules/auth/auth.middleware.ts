@@ -1,5 +1,6 @@
 // @ts-nocheck -- JWT request augmentation is narrowed by Auth route contracts.
 import jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 
 import { IS_PLATFORM } from '@/shared/utils.js';
 
@@ -7,6 +8,29 @@ import { userDb, appConfigDb } from '../database/index.js';
 
 // Use env var if set, otherwise auto-generate a unique secret per installation
 const JWT_SECRET = process.env.JWT_SECRET || appConfigDb.getOrCreateJwtSecret();
+
+/**
+ * Platform mode per-user identity: the reverse proxy (wugong-nginx →
+ * oauth2-proxy) authenticates the request and forwards the account name in
+ * `X-Forwarded-User`. Map it to a real DB user, auto-creating on first sight
+ * (password login never happens for platform users — identity is the
+ * gateway's job, so the stored hash is an unguessable placeholder).
+ *
+ * No header (direct container-network call, health probe): fall back to the
+ * legacy single-user behavior so internal tooling keeps working.
+ */
+const resolvePlatformUserFromHeader = (headerUser) => {
+  const raw = typeof headerUser === 'string' ? headerUser.trim() : '';
+  if (!raw) {
+    return userDb.getFirstUser() ?? null;
+  }
+  const existing = userDb.getUserByUsername(raw);
+  if (existing) {
+    return userDb.getUserById(existing.id) ?? null;
+  }
+  const created = userDb.createUser(raw, `platform:${randomUUID()}`);
+  return userDb.getUserById(created.id) ?? null;
+};
 
 // Optional API key middleware
 const validateApiKey = (req, res, next) => {
@@ -24,10 +48,12 @@ const validateApiKey = (req, res, next) => {
 
 // JWT authentication middleware
 const authenticateToken = async (req, res, next) => {
-  // Platform mode:  use single database user
+  // Platform mode: map the reverse-proxy identity header to a real per-user
+  // account (auto-created on first sight); header-less internal calls fall
+  // back to the legacy single-user behavior.
   if (IS_PLATFORM) {
     try {
-      const user = userDb.getFirstUser();
+      const user = resolvePlatformUserFromHeader(req.headers['x-forwarded-user']);
       if (!user) {
         return res.status(500).json({ error: 'Platform mode: No user found in database' });
       }
@@ -115,11 +141,14 @@ const generateToken = (user) => {
 };
 
 // WebSocket authentication function
-const authenticateWebSocket = (token) => {
-  // Platform mode: bypass token validation, return first user
+const authenticateWebSocket = (token, upgradeHeaders) => {
+  // Platform mode: map the upgrade request's proxy identity header to a real
+  // per-user account (same rule as the REST middleware)
   if (IS_PLATFORM) {
     try {
-      const user = userDb.getFirstUser();
+      const user = resolvePlatformUserFromHeader(
+        upgradeHeaders ? upgradeHeaders['x-forwarded-user'] : undefined
+      );
       if (user) {
         return { id: user.id, userId: user.id, username: user.username };
       }

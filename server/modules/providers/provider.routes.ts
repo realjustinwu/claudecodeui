@@ -20,8 +20,36 @@ import type {
   UpsertProviderMcpServerInput,
 } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
+import { isProjectPathAllowedForUser } from '@/shared/user-dirs.js';
+import { sessionsDb } from '@/modules/database/index.js';
 
 const router = express.Router();
+
+/**
+ * Per-user session ownership guard (platform deployments): every
+ * `/sessions/:sessionId*` route below runs through this first. A session with
+ * an owner is only visible to that account; NULL-owned rows (legacy or
+ * disk-synced unattributed) remain visible to everyone.
+ *
+ * 404 rather than 403 so existence of someone else's session is not leaked.
+ */
+router.use('/sessions/:sessionId', (req, res, next) => {
+  try {
+    const session = sessionsDb.getSessionById(String(req.params.sessionId ?? ''));
+    const { user } = req as { user?: { id?: string | number } };
+    if (
+      session &&
+      session.user_id != null &&
+      user &&
+      Number(session.user_id) !== Number(user.id)
+    ) {
+      return res.status(404).json({ error: 'Session not found.' });
+    }
+  } catch {
+    // Lookup failures fall through — the route itself will surface them.
+  }
+  next();
+});
 
 const readPathParam = (value: unknown, name: string): string => {
   if (typeof value === 'string') {
@@ -864,15 +892,32 @@ router.post(
     const provider = parseProvider(body.provider);
     const projectPath = typeof body.projectPath === 'string' ? body.projectPath : '';
     const initialMessage = typeof body.initialMessage === 'string' ? body.initialMessage : '';
-    const result = sessionsService.createAppSession(provider, projectPath, initialMessage);
+    const { user } = req as { user?: { id?: string | number; username?: string } };
+    // Per-user workspace guard: the users/ tree is partitioned by account.
+    if (
+      user &&
+      !isProjectPathAllowedForUser(projectPath.trim(), String(user.username))
+    ) {
+      throw new AppError(
+        'Sessions cannot be started inside another account\u2019s workspace.',
+        { code: 'PROJECT_PATH_FORBIDDEN', statusCode: 403 }
+      );
+    }
+    const result = sessionsService.createAppSession(
+      provider,
+      projectPath,
+      initialMessage,
+      user?.id != null ? Number(user.id) : null
+    );
     res.status(201).json(createApiSuccessResponse(result));
   }),
 );
 
 router.get(
   '/sessions/running',
-  asyncHandler(async (_req: Request, res: Response) => {
-    const sessions = await sessionsService.listRunningSessions();
+  asyncHandler(async (req: Request, res: Response) => {
+    const { user } = req as { user?: { id?: string | number } };
+    const sessions = await sessionsService.listRunningSessions(user?.id != null ? Number(user.id) : null);
     res.json(createApiSuccessResponse({ sessions }));
   }),
 );
@@ -882,15 +927,17 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const limit = parseBoundedIntegerQuery(req.query.limit, 'limit', 40, 1, 100);
     const offset = parseBoundedIntegerQuery(req.query.offset, 'offset', 0, 0);
-    const page = sessionsService.listRecentSessions(limit, offset);
+    const { user } = req as { user?: { id?: string | number } };
+    const page = sessionsService.listRecentSessions(limit, offset, user?.id != null ? Number(user.id) : null);
     res.json(createApiSuccessResponse(page));
   }),
 );
 
 router.get(
   '/sessions/archived',
-  asyncHandler(async (_req: Request, res: Response) => {
-    const sessions = sessionsService.listArchivedSessions();
+  asyncHandler(async (req: Request, res: Response) => {
+    const { user } = req as { user?: { id?: string | number } };
+    const sessions = sessionsService.listArchivedSessions(user?.id != null ? Number(user.id) : null);
     res.json(createApiSuccessResponse({ sessions }));
   }),
 );

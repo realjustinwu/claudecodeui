@@ -143,12 +143,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- session, and deleting the source does not affect it.
     forked_from_session_id TEXT,
     isArchived BOOLEAN DEFAULT 0,
+    -- Owning platform account (platform deployments map the reverse-proxy
+    -- identity header to per-user rows). NULL on legacy/unattributed rows —
+    -- those stay visible to everyone, matching pre-ownership behavior.
+    user_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (session_id),
     FOREIGN KEY (project_path) REFERENCES projects(project_path)
     ON DELETE SET NULL
-    ON UPDATE CASCADE
+    ON UPDATE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE SET NULL
 );
 `;
 

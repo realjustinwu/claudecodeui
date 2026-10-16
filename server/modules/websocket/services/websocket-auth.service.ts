@@ -1,10 +1,14 @@
+import type { IncomingHttpHeaders } from 'node:http';
 import type { VerifyClientCallbackSync } from 'ws';
 
 import type { AuthenticatedWebSocketRequest } from '@/shared/types.js';
 
 type WebSocketAuthDependencies = {
   isPlatform: boolean;
-  authenticateWebSocket: (token: string | null) => {
+  authenticateWebSocket: (
+    token: string | null,
+    upgradeHeaders?: IncomingHttpHeaders
+  ) => {
     id?: string | number;
     userId?: string | number;
     username?: string;
@@ -28,9 +32,10 @@ export function verifyWebSocketClient(
 
   console.log('WebSocket connection attempt to:', `${loggedUrl.pathname}${loggedUrl.search}`);
 
-  // Platform mode: use the first DB user and skip token checks.
+  // Platform mode: map the upgrade request's proxy identity header to a
+  // real per-user account (same rule as the REST middleware).
   if (dependencies.isPlatform) {
-    const user = dependencies.authenticateWebSocket(null);
+    const user = dependencies.authenticateWebSocket(null, request.headers);
     if (!user) {
       console.log('[WARN] Platform mode: No user found in database');
       return false;

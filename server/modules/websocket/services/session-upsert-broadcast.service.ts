@@ -21,6 +21,18 @@ import type { SessionUpsertedEvent } from '@/shared/types.js';
 async function buildSessionUpsertedEvent(
   sessionIdOrProviderSessionId: string,
 ): Promise<SessionUpsertedEvent | null> {
+  const envelope = await buildSessionUpsertEnvelope(sessionIdOrProviderSessionId);
+  return envelope?.event ?? null;
+}
+
+/**
+ * @internal Same as `buildSessionUpsertedEvent` but keeps the owning account
+ * alongside the wire event, so per-user clients can be filtered without a
+ * second DB lookup. Exported for the broadcast tests.
+ */
+export async function buildSessionUpsertEnvelope(
+  sessionIdOrProviderSessionId: string,
+): Promise<{ event: SessionUpsertedEvent; ownerId: number | null } | null> {
   // Resolving by provider id first covers the watcher, which only ever sees
   // the id written in the transcript. For a row where the two ids are equal
   // — legacy rows, and any session indexed from disk before its mapping
@@ -37,7 +49,7 @@ async function buildSessionUpsertedEvent(
     ? project.custom_project_name
     : await generateDisplayName(path.basename(projectPath ?? '') || (projectPath ?? ''), projectPath);
 
-  return {
+  const event: SessionUpsertedEvent = {
     kind: 'session_upserted',
     sessionId: row.session_id,
     providerSessionId: row.provider_session_id ?? null,
@@ -61,27 +73,41 @@ async function buildSessionUpsertedEvent(
       : null,
     timestamp: new Date().toISOString(),
   };
+
+  return { event, ownerId: row.user_id == null ? null : Number(row.user_id) };
 }
 
-function sendToConnectedClients(payloads: string[]): void {
-  if (payloads.length === 0) {
+/**
+ * Per-client delivery: an event with an owner only reaches that account's
+ * sockets (tagged at connection time as `__wgUserId`). NULL-owned events
+ * (legacy / disk-synced unattributed) broadcast to everyone as before.
+ */
+function sendToConnectedClients(
+  envelopes: { payload: string; ownerId: number | null }[]
+): void {
+  if (envelopes.length === 0) {
     return;
   }
 
   connectedClients.forEach((client) => {
-    if (client.readyState === WS_OPEN_STATE) {
-      for (const payload of payloads) {
-        client.send(payload);
+    if (client.readyState !== WS_OPEN_STATE) {
+      return;
+    }
+    const clientUserId = (client as { __wgUserId?: number | null }).__wgUserId;
+    for (const { payload, ownerId } of envelopes) {
+      if (ownerId != null && clientUserId != null && Number(ownerId) !== Number(clientUserId)) {
+        continue;
       }
+      client.send(payload);
     }
   });
 }
 
 /** Announces one session. Used by the chat run registry when a run reports its provider-native id. */
 export async function broadcastSessionUpserted(sessionIdOrProviderSessionId: string): Promise<void> {
-  const event = await buildSessionUpsertedEvent(sessionIdOrProviderSessionId);
-  if (event) {
-    sendToConnectedClients([JSON.stringify(event)]);
+  const envelope = await buildSessionUpsertEnvelope(sessionIdOrProviderSessionId);
+  if (envelope) {
+    sendToConnectedClients([{ payload: JSON.stringify(envelope.event), ownerId: envelope.ownerId }]);
   }
 }
 
@@ -93,15 +119,15 @@ export async function broadcastSessionUpserted(sessionIdOrProviderSessionId: str
 export async function broadcastSessionUpsertedBatch(
   sessionIds: Iterable<string>,
 ): Promise<void> {
-  const payloads: string[] = [];
+  const envelopes: { payload: string; ownerId: number | null }[] = [];
   for (const sessionId of sessionIds) {
-    const event = await buildSessionUpsertedEvent(sessionId);
-    if (event) {
-      payloads.push(JSON.stringify(event));
+    const envelope = await buildSessionUpsertEnvelope(sessionId);
+    if (envelope) {
+      envelopes.push({ payload: JSON.stringify(envelope.event), ownerId: envelope.ownerId });
     }
   }
 
-  sendToConnectedClients(payloads);
+  sendToConnectedClients(envelopes);
 }
 
 /** @internal Exported for the broadcast tests, which assert the payload shape directly. */
