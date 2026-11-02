@@ -26,7 +26,8 @@ type UseChatRealtimeHandlersArgs = {
   pendingPermissionRequests: PendingPermissionRequest[];
   setPendingPermissionRequests: Dispatch<SetStateAction<PendingPermissionRequest[]>>;
   streamTimerRef: MutableRefObject<number | null>;
-  accumulatedStreamRef: MutableRefObject<string>;
+  /** Accumulated `stream_delta` text per session id. Keyed per session so concurrent streams never mix. */
+  accumulatedStreamRef: MutableRefObject<Map<string, string>>;
   /**
    * Highest live `seq` observed per session. Essential for reconnect catch-up:
    * `chat.subscribe` sends this value as `lastSeq` so the server replays only
@@ -241,21 +242,28 @@ export function useChatRealtimeHandlers({
       /* -------------------------------------------------------------- */
 
       // --- Streaming: buffer for performance ---
+      // The accumulation is keyed per session: several sessions can stream at
+      // the same time (one visible, the rest in the background), and a single
+      // shared buffer would stitch their texts together — or, worse, append
+      // every background delta as its own transcript row (one fragment per
+      // token). Every session's deltas fold into ITS `__streaming_<sid>`
+      // bubble; only the visible one gets the 100ms paint throttle.
       if (msg.kind === 'stream_delta') {
         const text = (msg.content as string) || '';
-        if (!text) return;
-        accumulatedStreamRef.current += text;
-        if (!streamTimerRef.current) {
-          streamTimerRef.current = window.setTimeout(() => {
-            streamTimerRef.current = null;
-            if (sid) {
-              sessionStore.updateStreaming(sid, accumulatedStreamRef.current, provider);
-            }
-          }, 100);
-        }
-        // Also route to store for non-active sessions
-        if (sid && sid !== activeViewSessionId) {
-          sessionStore.appendRealtime(sid, msg as unknown as NormalizedMessage);
+        if (!text || !sid) return;
+        const bubbleProvider = (msg.provider as LLMProvider) || provider;
+        accumulatedStreamRef.current.set(sid, (accumulatedStreamRef.current.get(sid) ?? '') + text);
+        if (sid === activeViewSessionId) {
+          if (!streamTimerRef.current) {
+            streamTimerRef.current = window.setTimeout(() => {
+              streamTimerRef.current = null;
+              sessionStore.updateStreaming(sid, accumulatedStreamRef.current.get(sid) ?? '', bubbleProvider);
+            }, 100);
+          }
+        } else {
+          // Fold into the background session's own streaming bubble so its
+          // transcript stays one growing row, never one row per delta.
+          sessionStore.updateStreaming(sid, accumulatedStreamRef.current.get(sid) ?? '', bubbleProvider);
         }
         return;
       }
@@ -266,12 +274,13 @@ export function useChatRealtimeHandlers({
           streamTimerRef.current = null;
         }
         if (sid) {
-          if (accumulatedStreamRef.current) {
-            sessionStore.updateStreaming(sid, accumulatedStreamRef.current, provider);
+          const accumulated = accumulatedStreamRef.current.get(sid);
+          if (accumulated) {
+            sessionStore.updateStreaming(sid, accumulated, (msg.provider as LLMProvider) || provider);
           }
           sessionStore.finalizeStreaming(sid);
+          accumulatedStreamRef.current.delete(sid);
         }
-        accumulatedStreamRef.current = '';
         return;
       }
 
@@ -290,16 +299,17 @@ export function useChatRealtimeHandlers({
       // --- UI side effects for specific kinds ---
       switch (msg.kind) {
         case 'complete': {
-          // Flush any remaining streaming state
+          // Flush any remaining streaming state — per session, so a completing
+          // background run never clears another session's in-flight buffer.
           if (streamTimerRef.current) {
             clearTimeout(streamTimerRef.current);
             streamTimerRef.current = null;
           }
-          if (sid && accumulatedStreamRef.current) {
-            sessionStore.updateStreaming(sid, accumulatedStreamRef.current, provider);
+          if (sid && accumulatedStreamRef.current.get(sid)) {
+            sessionStore.updateStreaming(sid, accumulatedStreamRef.current.get(sid) ?? '', provider);
             sessionStore.finalizeStreaming(sid);
+            accumulatedStreamRef.current.delete(sid);
           }
-          accumulatedStreamRef.current = '';
 
           // `complete` is the unified terminal event — every provider run ends
           // with exactly one, regardless of success, failure, or abort. The

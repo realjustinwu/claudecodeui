@@ -4,7 +4,8 @@ import { StringDecoder } from 'node:string_decoder';
 import spawn from 'cross-spawn';
 
 import type { IProviderAuth } from '@/shared/interfaces.js';
-import type { ProviderAuthStatus } from '@/shared/types.js';
+import type { CliVersionProbe, ProviderAuthStatus } from '@/shared/types.js';
+import { probeCliVersion } from '@/shared/utils.js';
 
 type PiCredentialsStatus = {
   authenticated: boolean;
@@ -131,11 +132,12 @@ async function probePi(args: string[], timeoutMs: number): Promise<PiCliProbe> {
 
 export class PiProviderAuth implements IProviderAuth {
   /**
-   * Checks whether the pi CLI is available to the server process.
+   * Checks whether the pi CLI is available to the server process, and which
+   * version it is. Synchronous (like the other providers' probes) — the 5s
+   * timeout of `probeCliVersion` bounds the wait.
    */
-  private async checkInstalled(): Promise<boolean> {
-    const result = await probePi(['--version'], VERSION_TIMEOUT_MS);
-    return result.ok;
+  checkInstalled(): CliVersionProbe {
+    return probeCliVersion('pi');
   }
 
   /**
@@ -145,13 +147,14 @@ export class PiProviderAuth implements IProviderAuth {
    * error string is reported for it.
    */
   async getStatus(): Promise<ProviderAuthStatus> {
-    const installed = await this.checkInstalled();
+    const { installed, version: installedVersion } = this.checkInstalled();
     // A missing binary cannot answer `auth check` either; probing would just
     // burn three ENOENT spawns.
     const credentials = installed ? await this.checkCredentials() : { authenticated: false, email: null, method: null };
 
     return {
       installed,
+      installedVersion,
       provider: 'pi',
       authenticated: credentials.authenticated,
       // pi has no account identity: credentials are a local auth store or an

@@ -456,7 +456,13 @@ test(
       chatRunRegistry.completeRun(appSessionId, { exitCode: 0, aborted: true });
 
       await runPromise;
-      assert.match(failure || '', /terminated|exited with code/);
+      // pi ≥ 1.4 traps SIGTERM and shuts down gracefully (exit 0), so the
+      // run may resolve instead of rejecting; both are legitimate abort
+      // outcomes. Older pi died by signal, surfacing 'terminated' here.
+      assert.ok(
+        failure === null || failure === '' || /terminated|exited with code/.test(failure),
+        `unexpected abort failure: ${failure}`,
+      );
 
       const completes = connection.frames.filter((frame) => frame.kind === 'complete');
       assert.equal(completes.length, 1, 'exactly one complete reaches the client');

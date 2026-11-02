@@ -448,6 +448,22 @@ export function createProviderTokenUsageService(
         };
       }
 
+      // pi writes JSONL transcripts the way Claude does, but without the
+      // usage rows this reader parses (its usage arrives on the live stream
+      // only), so this endpoint answers with an explicit unsupported result
+      // the same way Cursor does.
+      if (session.provider === 'pi') {
+        return {
+          used: 0,
+          total: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          breakdown: { input: 0, output: 0 },
+          unsupported: true,
+          message: 'Token usage tracking not available for Pi sessions',
+        };
+      }
+
       if (session.provider === 'opencode') {
         const databasePath = dependencies.getOpenCodeDatabasePath();
         if (!dependencies.fileExists(databasePath)) {

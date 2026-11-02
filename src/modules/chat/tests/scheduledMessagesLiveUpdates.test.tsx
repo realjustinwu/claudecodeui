@@ -220,7 +220,7 @@ test('the announcement never lands in the transcript', () => {
     pendingPermissionRequests: [],
     setPendingPermissionRequests: () => {},
     streamTimerRef: { current: null },
-    accumulatedStreamRef: { current: '' },
+    accumulatedStreamRef: { current: new Map() },
     lastSeqRef: { current: new Map() },
     statusCheckSentAtRef: { current: new Map() },
     requestLatestMessages: async () => {},

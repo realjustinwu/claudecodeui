@@ -10,7 +10,7 @@ import {
 } from '@/shared/image-attachments.js';
 import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
 import type { NormalizedMessage, ProviderRuntimeContext, ProviderRuntimeWriter } from '@/shared/types.js';
-import { AppError, createCompleteMessage, createNormalizedMessage, flattenPromptForWindowsShell } from '@/shared/utils.js';
+import { AppError, createCompleteMessage, createNormalizedMessage, flattenPromptForWindowsShell, readObjectRecord } from '@/shared/utils.js';
 
 // cross-spawn resolves .cmd shims/PATHEXT on Windows and delegates to
 // child_process.spawn everywhere else.
@@ -197,10 +197,15 @@ export function processPiOutputLine(line: string, ctx: PiOutputContext): void {
     if (nextSessionId) {
       ctx.registerSession(nextSessionId);
     }
-    if (event && typeof event === 'object' && 'usage' in event) {
-      const usage = (event as { usage?: unknown }).usage;
-      if (usage && typeof usage === 'object') {
-        ctx.setUsage(usage as PiUsageCounters);
+    if (event && typeof event === 'object') {
+      // pi 0.85.x carried usage at the top level; pi 1.4 nests it inside the
+      // `message` record (e.g. on `turn_end`). Read both so the run's final
+      // accounting still reaches the token-budget status frame.
+      const rawUsage = 'usage' in event
+        ? (event as { usage?: unknown }).usage
+        : readObjectRecord(readObjectRecord((event as { message?: unknown }).message)?.usage);
+      if (rawUsage && typeof rawUsage === 'object') {
+        ctx.setUsage(rawUsage as PiUsageCounters);
       }
     }
     const normalized = ctx.normalizeMessage(event, ctx.getCapturedSessionId() || ctx.sessionId || null);
