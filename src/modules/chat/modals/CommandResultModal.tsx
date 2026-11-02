@@ -57,7 +57,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   cursor: 'Cursor',
   codex: 'Codex',
   opencode: 'OpenCode',
-  pi: 'Pi',
 };
 
 const FALLBACK_COMMANDS: CommandEntry[] = [
@@ -449,11 +448,11 @@ function CostContent({ data }: { data: CostCommandData }) {
             icon: TerminalSquare,
           },
         ]),
-    // Only when it is consistent with what was actually used. The window is
-    // resolved per session from its model selection ([1m] variants report 1M;
-    // others fall back to the CONTEXT_WINDOW setting or 200k) — but a stale or
-    // hand-edited value can still land below `used`, and a row reading
-    // "used 404,009 / window 160,000" is worse than no row at all.
+    // Only when it is consistent with what was actually used. Claude reports
+    // the window its model has once a turn completes, but until then (and for
+    // providers that report none) it is the CONTEXT_WINDOW setting, which cannot
+    // know whether a session runs a 200K or a 1M variant of the same model —
+    // and a row reading "used 404,009 / window 160,000" is worse than no row.
     ...(total > used
       ? [{ label: 'Context window', value: formatNumber(total), icon: Gauge }]
       : []),
