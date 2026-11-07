@@ -45,14 +45,20 @@ jobs:
 
       # The repo's package.json stays upstream-identical (@cloudcli-ai/cloudcli,
       # upstream version); the fork identity exists only at publish time so
-      # merging upstream never conflicts on these fields.
+      # merging upstream never conflicts on these fields. The upstream base
+      # comes from package.json (kept correct by each upstream merge), and the
+      # run number keeps every publish unique (GitHub Packages rejects
+      # republishing an existing version).
       - name: Rewrite package identity for GitHub Packages
         run: |
           node -e '
             const fs = require("fs");
             const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
             pkg.name = "@realjustinwu/cloudcli";
-            pkg.version = "1.37.4-fork.${{ github.run_number }}";
+            pkg.version = pkg.version.replace(/-fork\.\d+$/, "-fork.${{ github.run_number }}");
+            if (pkg.version === JSON.parse(fs.readFileSync("package.json", "utf8")).version) {
+              throw new Error("package.json version has no -fork.N suffix to pin the run number onto");
+            }
             fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
           '
 
