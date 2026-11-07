@@ -41,12 +41,14 @@ test('capability effort levels cover every level a curated model declares', () =
 
 test('side questions are supported by claude, codex and opencode, not by cursor', () => {
   // Cursor has no headless way to ask on the side; its menu then offers only
-  // Queue · Stop / Send anyway.
+  // Queue · Stop / Send anyway. The fork's pi provider answers on a
+  // read-only `pi --fork` run, the same pattern Claude uses.
   const expected: Record<LLMProvider, boolean> = {
     claude: true,
     codex: true,
     cursor: false,
     opencode: true,
+    pi: true,
   };
   for (const [provider, supported] of Object.entries(expected) as Array<[LLMProvider, boolean]>) {
     const capabilities = providerCapabilitiesService.getProviderCapabilities(provider) as unknown as Record<string, unknown>;

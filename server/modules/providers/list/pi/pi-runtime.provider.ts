@@ -9,7 +9,7 @@ import {
   normalizeAttachmentDescriptors,
 } from '@/shared/image-attachments.js';
 import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
-import type { NormalizedMessage, ProviderRuntimeContext, ProviderRuntimeWriter } from '@/shared/types.js';
+import type { NormalizedMessage, ProviderRuntimeContext, ProviderRuntimeWriter, SideQuestionOutcome, SideQuestionRequest, SideQuestionSink } from '@/shared/types.js';
 import { AppError, createCompleteMessage, createNormalizedMessage, flattenPromptForWindowsShell, readObjectRecord } from '@/shared/utils.js';
 
 // cross-spawn resolves .cmd shims/PATHEXT on Windows and delegates to
@@ -501,6 +501,199 @@ async function spawnPi(
   });
 }
 
+/**
+ * The only tool a side question may use: look, never touch. `-t` with a
+ * plain list replaces pi's defaults, so bash/edit/write and every extension
+ * tool stay off — the read-only restriction Claude buys with `tools:` rides
+ * on the CLI's own allowlist here.
+ */
+const PI_SIDE_QUESTION_TOOLS = 'read';
+
+/**
+ * A short instruction appended to pi's own system prompt so the fork knows it
+ * is answering a side question, not continuing the conversation. Mirrors the
+ * Claude BTW append verbatim.
+ */
+const PI_SIDE_QUESTION_SYSTEM_PROMPT_APPEND =
+  'This is a side question asked apart from the ongoing conversation, on a read-only '
+  + 'copy of it. Do not use any tool that changes anything. Answer briefly, in the '
+  + 'language the question was asked in.';
+
+/**
+ * Builds the `pi -p --mode json --fork …` argument vector for one side
+ * question. Verified against pi 1.4:
+ * - `--fork <id>` copies the provider session's transcript into a fresh
+ *   session, so the main conversation's file is never appended to;
+ * - `--no-mcp` keeps the fork from starting the user's MCP servers (the
+ *   isolation Claude's strictMcpConfig buys);
+ * - `-t read` is the read-only allowlist above.
+ *
+ * Exported for tests only.
+ */
+export function buildPiSideQuestionArgs({
+  providerSessionId,
+  model,
+  question,
+}: {
+  providerSessionId?: string | null;
+  model?: string | null;
+  question: string;
+}): string[] {
+  const args = ['-p', '--mode', 'json'];
+  if (providerSessionId) {
+    args.push('--fork', providerSessionId);
+  }
+  if (model) {
+    args.push('--model', model);
+  }
+  args.push('--no-mcp', '-t', PI_SIDE_QUESTION_TOOLS);
+  args.push('--append-system-prompt', PI_SIDE_QUESTION_SYSTEM_PROMPT_APPEND);
+  args.push('--', flattenPromptForWindowsShell(question));
+  return args;
+}
+
+/**
+ * Answers one side question on a read-only fork of the session's pi
+ * transcript (or a fresh session when the app session has no provider id
+ * yet, the same fallback Claude's fork path takes).
+ *
+ * Deliberately shares nothing with a main run's machinery: no ws writer, no
+ * `activePiProcesses` entry (its keys are main-run session ids), no run
+ * lifecycle notifications — the side-questions service owns the events. A
+ * dismiss kills the child through `request.signal`; the service races that
+ * abort on its side, so the outcome resolved here after a kill is discarded.
+ * Never rejects: every failure comes back as an `error` outcome.
+ */
+async function askPiSideQuestion(
+  request: SideQuestionRequest,
+  sink: SideQuestionSink,
+): Promise<SideQuestionOutcome> {
+  const { providerSessionId, projectPath, question, model, signal } = request;
+  const workingDir = projectPath || process.cwd();
+  const args = buildPiSideQuestionArgs({ providerSessionId, model, question });
+
+  return new Promise<SideQuestionOutcome>((resolve) => {
+    let answer = '';
+    let streamError: string | null = null;
+    let settled = false;
+    let stdoutLineBuffer = '';
+    const stdoutDecoder = new StringDecoder('utf8');
+
+    const settle = (outcome: SideQuestionOutcome): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      resolve(outcome);
+    };
+
+    const onAbort = (): void => {
+      child?.kill('SIGTERM');
+    };
+    if (signal.aborted) {
+      settle({ status: 'error', error: 'aborted', answer: '' });
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    const child = spawnFunction('pi', args, {
+      cwd: workingDir,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env },
+    }) as PiProcessHandle;
+    child.stdin?.end();
+
+    /**
+     * One parsed stdout line. Only the assistant text channel and pi's error
+     * signals matter here; everything else (session header, tool activity,
+     * turn bookkeeping) belongs to the fork, not the answer.
+     */
+    const processLine = (line: string): void => {
+      if (!line.trim()) {
+        return;
+      }
+      let event: unknown;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return; // pi's own stdout warnings are not part of the answer
+      }
+      const record = readObjectRecord(event);
+      if (!record) {
+        return;
+      }
+
+      if (record.type === 'message_update') {
+        const update = readObjectRecord(record.assistantMessageEvent);
+        if (update?.type === 'text_delta' && typeof update.delta === 'string' && update.delta.length > 0) {
+          sink.delta(update.delta);
+          answer += update.delta;
+        }
+        return;
+      }
+
+      // pi exits 0 even when the model call failed; the error only shows up
+      // as stopReason/errorMessage on the assistant message.
+      if (record.type === 'message_end') {
+        const message = readObjectRecord(record.message);
+        if (message?.stopReason === 'error') {
+          streamError = typeof message.errorMessage === 'string' && message.errorMessage
+            ? message.errorMessage
+            : 'Pi failed to answer the side question.';
+        }
+        return;
+      }
+
+      if (record.type === 'extension_error') {
+        streamError = typeof record.error === 'string' && record.error
+          ? record.error
+          : typeof record.errorMessage === 'string' && record.errorMessage
+            ? record.errorMessage
+            : streamError;
+      }
+    };
+
+    child.stdout?.on('data', (data: Buffer) => {
+      stdoutLineBuffer += stdoutDecoder.write(data);
+      const completeLines = stdoutLineBuffer.split(/\r?\n/);
+      stdoutLineBuffer = completeLines.pop() || '';
+      completeLines.forEach((line) => processLine(line.trim()));
+    });
+
+    // stderr stays unparsed: a side question has no chat surface to stream
+    // diagnostics onto, and close/error below already carry the exit story.
+    child.on('close', (code: number | null) => {
+      stdoutLineBuffer += stdoutDecoder.end();
+      if (stdoutLineBuffer.trim()) {
+        processLine(stdoutLineBuffer.trim());
+      }
+
+      if (signal.aborted) {
+        settle({ status: 'error', error: 'aborted', answer });
+        return;
+      }
+      if (streamError) {
+        settle({ status: 'error', error: streamError, answer });
+        return;
+      }
+      if (code !== 0) {
+        settle({ status: 'error', error: code === null ? 'pi process was terminated' : `pi exited with code ${code}`, answer });
+        return;
+      }
+      if (answer.length > 0) {
+        settle({ status: 'done', answer });
+        return;
+      }
+      settle({ status: 'error', error: 'Pi returned no answer.', answer: '' });
+    });
+
+    child.on('error', (error: Error) => {
+      settle({ status: 'error', error: error.message, answer });
+    });
+  });
+}
+
 function abortPiSession(sessionId: string): boolean {
   const process = activePiProcesses.get(sessionId);
   if (!process) {
@@ -528,6 +721,7 @@ function getActivePiSessions(): string[] {
 export const piRuntime = {
   run: spawnPi,
   abort: abortPiSession,
+  askSideQuestion: askPiSideQuestion,
 };
 
 export {

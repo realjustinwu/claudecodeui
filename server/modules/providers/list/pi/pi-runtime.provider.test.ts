@@ -11,6 +11,7 @@ import { AppError } from '@/shared/utils.js';
 import {
   abortPiSession,
   buildPiArgs,
+  buildPiSideQuestionArgs,
   isPiSessionActive,
   piRuntime,
   processPiOutputLine,
@@ -523,5 +524,109 @@ test('spawnPi rejects PROVIDER_NOT_INSTALLED when the CLI is missing', async () 
     const completes = messages.filter((message) => message.kind === 'complete');
     assert.equal(completes.length, 1);
     assert.equal(completes[0].success, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Side questions (BTW): a read-only fork run, sharing nothing with main runs.
+// ---------------------------------------------------------------------------
+
+test('buildPiSideQuestionArgs maps the read-only fork invocation', () => {
+  assert.deepEqual(
+    buildPiSideQuestionArgs({ providerSessionId: 'abc', model: 'zai/glm-4.7', question: 'what does this do?' }),
+    [
+      '-p', '--mode', 'json',
+      '--fork', 'abc',
+      '--model', 'zai/glm-4.7',
+      '--no-mcp', '-t', 'read',
+      '--append-system-prompt',
+      'This is a side question asked apart from the ongoing conversation, on a read-only '
+        + 'copy of it. Do not use any tool that changes anything. Answer briefly, in the '
+        + 'language the question was asked in.',
+      '--', 'what does this do?',
+    ],
+  );
+  // No provider session yet: a fresh one-shot run, same as Claude's fork fallback.
+  const fresh = buildPiSideQuestionArgs({ question: 'hi' });
+  assert.equal(fresh.includes('--fork'), false);
+  assert.equal(fresh.at(-1), 'hi');
+});
+
+test('askSideQuestion streams deltas and resolves done on a replayed answer', async () => {
+  await withFakePiOnPath('replay', async (tempRoot) => {
+    const argsCapturePath = path.join(tempRoot, 'pi-btw-args.json');
+    process.env.PI_ARGS_CAPTURE = argsCapturePath;
+    const deltas: string[] = [];
+
+    const outcome = await piRuntime.askSideQuestion!({
+      appSessionId: 'app-1',
+      providerSessionId: 'abc',
+      projectPath: tempRoot,
+      question: 'Say hi on the side',
+      model: null,
+      signal: new AbortController().signal,
+    }, { delta: (text) => deltas.push(text) });
+
+    assert.deepEqual(outcome, { status: 'done', answer: 'Hello world' });
+    assert.deepEqual(deltas, ['Hello', ' world']);
+
+    const launchedArgs = JSON.parse(await readFile(argsCapturePath, 'utf8')) as string[];
+    // Read-only fork: transcript copied, tools allowlisted, MCP off.
+    assert.ok(launchedArgs.includes('--fork'));
+    assert.equal(launchedArgs[launchedArgs.indexOf('--fork') + 1], 'abc');
+    assert.ok(launchedArgs.includes('--no-mcp'));
+    assert.equal(launchedArgs[launchedArgs.indexOf('-t') + 1], 'read');
+    const promptGuardIndex = launchedArgs.indexOf('--');
+    assert.ok(promptGuardIndex > -1);
+    assert.equal(launchedArgs.at(-1), 'Say hi on the side');
+  });
+});
+
+test('askSideQuestion surfaces the model error pi hides behind exit code 0', async () => {
+  await withFakePiOnPath('model-error', async (tempRoot) => {
+    const deltas: string[] = [];
+    const outcome = await piRuntime.askSideQuestion!({
+      appSessionId: 'app-1',
+      providerSessionId: null,
+      projectPath: tempRoot,
+      question: 'anything',
+      model: null,
+      signal: new AbortController().signal,
+    }, { delta: (text) => deltas.push(text) });
+
+    assert.equal(outcome.status, 'error');
+    assert.match((outcome as { error: string }).error, /403/);
+    assert.deepEqual(deltas, []);
+  });
+});
+
+test('askSideQuestion kill on dismiss settles aborted without touching main runs', async () => {
+  await withFakePiOnPath('hang', async (tempRoot) => {
+    const argsCapturePath = path.join(tempRoot, 'pi-btw-abort-args.json');
+    process.env.PI_ARGS_CAPTURE = argsCapturePath;
+    const controller = new AbortController();
+    const deltas: string[] = [];
+
+    const askPromise = piRuntime.askSideQuestion!({
+      appSessionId: 'app-1',
+      providerSessionId: null,
+      projectPath: tempRoot,
+      question: 'slow one',
+      model: null,
+      signal: controller.signal,
+    }, { delta: (text) => deltas.push(text) });
+
+    // Poll until the fork actually spawned, then dismiss.
+    for (let attempt = 0; attempt < 100 && !existsSync(argsCapturePath); attempt += 1) {
+      await sleep(50);
+    }
+    assert.equal(existsSync(argsCapturePath), true);
+    controller.abort();
+
+    const outcome = await askPromise;
+    assert.deepEqual(outcome, { status: 'error', error: 'aborted', answer: '' });
+    assert.deepEqual(deltas, []);
+    // No side-question child ever lands in the main run process table.
+    assert.equal(isPiSessionActive('app-1'), false);
   });
 });

@@ -145,8 +145,11 @@ const PROVIDER_CAPABILITIES: Record<LLMProvider, ProviderCapabilities> = {
   },
   pi: {
     provider: 'pi',
-    // pi has no permission system, fork, or MCP support, so only the default
-    // mode is offered; image attachments and abort (SIGTERM) are supported.
+    // pi has no permission system or MCP surface of its own here, so only
+    // the default mode is offered; image attachments and abort (SIGTERM) are
+    // supported. Session forking exists natively (`pi --fork`), which is what
+    // side questions run on — but no permission lever means the read-only
+    // restriction rides on the CLI's tool allowlist instead.
     permissionModes: ['default'],
     defaultPermissionMode: 'default',
     supportsImages: true,
@@ -160,6 +163,12 @@ const PROVIDER_CAPABILITIES: Record<LLMProvider, ProviderCapabilities> = {
     effortLevels: [],
     supportsMessageEditing: false,
     supportsSessionForking: false,
+    // Side questions run on a read-only fork of the provider session
+    // (`pi --fork <id> -t read`), exactly the Claude BTW pattern.
+    supportsSideQuestions: true,
+    // The runtime spawns one pi per turn with stdin closed, so a running
+    // turn has no open input to steer a message into.
+    supportsSteering: false,
   },
 };
 

@@ -76,7 +76,7 @@ const renderHandlers = () => {
     pendingPermissionRequests: [],
     setPendingPermissionRequests: () => {},
     streamTimerRef: { current: null },
-    accumulatedStreamRef: { current: '' },
+    accumulatedStreamRef: { current: new Map() },
     lastSeqRef: { current: new Map() },
     statusCheckSentAtRef: { current: new Map() },
     onSessionIdle: () => {},
